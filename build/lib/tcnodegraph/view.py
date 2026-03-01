@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import math
-
 from tcbase import Key, MouseButton
+from tcgui.widgets.input_dialog import show_input_dialog
+from tcgui.widgets.menu import Menu
 from tcgui.scene import GraphicsItem, GraphicsScene, RectItem, SceneTransform, SceneView
 
 from tcnodegraph.controller import GraphController
@@ -138,10 +138,55 @@ class NodeItem(RectItem):
         self.socket_row_height = 20.0
         self.socket_size = 8.0
         self.label_font_size = 12.0
+        self.param_row_height = 18.0
+        self.param_label_color = (0.70, 0.74, 0.82, 1.0)
+        self.param_value_color = (0.92, 0.94, 0.98, 1.0)
+        self.draw_param_names = True
+        self.draw_param_values = True
+        self._socket_colors = {
+            "fbo": (0.39, 0.70, 0.39, 1.0),
+            "texture": (0.78, 0.62, 0.35, 1.0),
+            "shadow": (0.45, 0.45, 0.70, 1.0),
+            "any": (0.68, 0.68, 0.70, 1.0),
+            "flow": (0.88, 0.88, 0.90, 1.0),
+        }
 
     @property
     def node(self) -> Node:
         return self.data["node"]
+
+    def configure_palette(self, node_kind: str, graph_type: str) -> None:
+        if node_kind == "resource":
+            if graph_type == "Shadow Maps":
+                self.fill_color = (0.22, 0.20, 0.30, 1.0)
+                self.title_bg_color = (0.34, 0.30, 0.47, 1.0)
+                self.border_color = (0.48, 0.44, 0.62, 1.0)
+            else:
+                self.fill_color = (0.18, 0.24, 0.20, 1.0)
+                self.title_bg_color = (0.26, 0.37, 0.28, 1.0)
+                self.border_color = (0.40, 0.52, 0.41, 1.0)
+        elif node_kind == "effect":
+            self.fill_color = (0.28, 0.23, 0.18, 1.0)
+            self.title_bg_color = (0.42, 0.31, 0.22, 1.0)
+            self.border_color = (0.56, 0.43, 0.32, 1.0)
+        elif node_kind == "viewport":
+            self.fill_color = (0.28, 0.19, 0.22, 1.0)
+            self.title_bg_color = (0.44, 0.26, 0.33, 1.0)
+            self.border_color = (0.60, 0.38, 0.46, 1.0)
+        else:
+            self.fill_color = (0.17, 0.20, 0.27, 1.0)
+            self.title_bg_color = (0.24, 0.28, 0.38, 1.0)
+            self.border_color = (0.32, 0.36, 0.48, 1.0)
+
+    def _socket_section_height(self) -> float:
+        return max(len(self.node.inputs), len(self.node.outputs), 1) * self.socket_row_height
+
+    def _params_start_y(self) -> float:
+        return self.title_height + self._socket_section_height() + 4.0
+
+    def content_min_height(self) -> float:
+        params_h = len(self.node.params) * self.param_row_height
+        return self._params_start_y() + params_h + 8.0
 
     def socket_world_pos(self, socket_name: str, *, output: bool) -> tuple[float, float] | None:
         sockets = self.node.outputs if output else self.node.inputs
@@ -184,11 +229,26 @@ class NodeItem(RectItem):
                 return ("output", sock.name)
         return None
 
+    def hit_param(self, wx: float, wy: float) -> str | None:
+        x, y = self.world_position()
+        lx = wx - x
+        ly = wy - y
+        if lx < 0.0 or lx > self.width:
+            return None
+
+        row_y = self._params_start_y()
+        for name in self.node.params.keys():
+            if row_y <= ly <= row_y + self.param_row_height:
+                return name
+            row_y += self.param_row_height
+        return None
+
     def _draw_socket(
         self,
         renderer,
         transform: SceneTransform,
         socket_name: str,
+        socket_type: str,
         *,
         output: bool,
         row_index: int,
@@ -197,30 +257,31 @@ class NodeItem(RectItem):
         cx_w = x + (self.width if output else 0.0)
         cy_w = y + self.title_height + self.socket_row_height * (row_index + 0.5)
         cx, cy = transform.world_to_screen(cx_w, cy_w)
-        size = max(6.0, self.socket_size * transform.zoom)
+        size = max(4.0, self.socket_size * transform.zoom)
+        label_font = max(6.0, self.label_font_size * transform.zoom)
         renderer.draw_rect(
             cx - size / 2.0,
             cy - size / 2.0,
             size,
             size,
-            self.output_socket_color if output else self.input_socket_color,
+            self._socket_colors.get(socket_type, self._socket_colors["any"]),
         )
 
         if output:
             renderer.draw_text(
                 cx - max(8.0, self.width * 0.45 * transform.zoom),
-                cy + self.label_font_size / 3.0,
+                cy + label_font / 3.0,
                 socket_name,
                 self.text_color,
-                self.label_font_size,
+                label_font,
             )
         else:
             renderer.draw_text(
                 cx + 8.0,
-                cy + self.label_font_size / 3.0,
+                cy + label_font / 3.0,
                 socket_name,
                 self.text_color,
-                self.label_font_size,
+                label_font,
             )
 
     def paint(self, renderer, transform: SceneTransform) -> None:
@@ -229,6 +290,8 @@ class NodeItem(RectItem):
         sw = ww * transform.zoom
         sh = wh * transform.zoom
         th = self.title_height * transform.zoom
+        title_font = max(7.0, self.font_size * transform.zoom)
+        param_font = max(6.0, (self.label_font_size - 1.0) * transform.zoom)
 
         renderer.draw_rect(sx, sy, sw, sh, self.fill_color)
         renderer.draw_rect(sx, sy, sw, th, self.title_bg_color)
@@ -236,16 +299,53 @@ class NodeItem(RectItem):
         renderer.draw_rect_outline(sx, sy, sw, sh, border, self.border_width)
         renderer.draw_text(
             sx + 8.0,
-            sy + min(th - 6.0, self.font_size + 7.0),
+            sy + min(th - 4.0, title_font + 6.0),
             self.label,
             self.text_color,
-            self.font_size,
+            title_font,
         )
 
         for i, sock in enumerate(self.node.inputs):
-            self._draw_socket(renderer, transform, sock.name, output=False, row_index=i)
+            self._draw_socket(
+                renderer,
+                transform,
+                sock.name,
+                sock.socket_type,
+                output=False,
+                row_index=i,
+            )
         for i, sock in enumerate(self.node.outputs):
-            self._draw_socket(renderer, transform, sock.name, output=True, row_index=i)
+            self._draw_socket(
+                renderer,
+                transform,
+                sock.name,
+                sock.socket_type,
+                output=True,
+                row_index=i,
+            )
+
+        if self.draw_param_names or self.draw_param_values:
+            row_start_s = transform.world_to_screen(wx, wy + self._params_start_y())[1]
+            row_h_s = self.param_row_height * transform.zoom
+            for i, (name, value) in enumerate(self.node.params.items()):
+                row_y_s = row_start_s + i * row_h_s
+                text_y = row_y_s + row_h_s * 0.5 + param_font * 0.34
+                if self.draw_param_names:
+                    renderer.draw_text(
+                        sx + 8.0,
+                        text_y,
+                        str(name),
+                        self.param_label_color,
+                        param_font,
+                    )
+                if self.draw_param_values:
+                    renderer.draw_text(
+                        sx + sw * 0.56,
+                        text_y,
+                        str(value),
+                        self.param_value_color,
+                        param_font,
+                    )
 
 
 class EdgeItem(GraphicsItem):
@@ -357,11 +457,17 @@ class NodeGraphSceneAdapter:
             item.x = n.x
             item.y = n.y
             item.width = n.width
-            min_rows = max(len(n.inputs), len(n.outputs), 1)
-            min_h = item.title_height + min_rows * item.socket_row_height + 10.0
-            item.height = max(n.height, min_h)
             item.data["node"] = n
             item.data["node_id"] = n.id
+            explicit_size = bool(n.data.get("explicit_size", False))
+            if explicit_size:
+                item.height = n.height
+            else:
+                item.height = max(n.height, item.content_min_height())
+            item.configure_palette(
+                str(n.data.get("node_type", n.kind)),
+                str(n.data.get("graph_type", n.title)),
+            )
             self.scene.add_item(item)
             self.node_items[n.id] = item
 
@@ -404,10 +510,22 @@ class NodeGraphView(SceneView):
         self.grid_axis_color = (0.24, 0.27, 0.34, 1.0)
         self._pending_connection: tuple[NodeItem, str, bool] | None = None
         self._pending_mouse_world: tuple[float, float] | None = None
+        # Called on RMB: fn(world_x, world_y) -> list[MenuItem]
+        self.menu_items_provider = None
+        # Keep inline value edits optional; external inspectors can disable this.
+        self.inline_param_editing = True
 
     def refresh(self) -> None:
         self.adapter.rebuild()
         self.scene = self.adapter.scene
+
+    def set_graph(self, graph: Graph) -> None:
+        self.controller = GraphController(graph)
+        self.adapter = NodeGraphSceneAdapter(graph)
+        self.adapter.rebuild()
+        self.scene = self.adapter.scene
+        self._pending_connection = None
+        self._pending_mouse_world = None
 
     def _draw_pending_connection(self, renderer) -> None:
         if self._pending_connection is None or self._pending_mouse_world is None:
@@ -432,12 +550,56 @@ class NodeGraphView(SceneView):
         renderer.end_clip()
 
     def on_mouse_down(self, event) -> bool:
+        if event.button == MouseButton.RIGHT:
+            if self._ui is not None and self.menu_items_provider is not None:
+                wx, wy = self.screen_to_world(event.x, event.y)
+                items = self.menu_items_provider(wx, wy)
+                if items:
+                    menu = Menu()
+                    menu.items = items
+                    menu.show(self._ui, event.x, event.y)
+                    return True
+            return super().on_mouse_down(event)
+
         if event.button != MouseButton.LEFT:
             return super().on_mouse_down(event)
 
         wx, wy = self.screen_to_world(event.x, event.y)
         hit = self.scene.hit_test(wx, wy)
         if isinstance(hit, NodeItem):
+            param_hit = hit.hit_param(wx, wy)
+            if self.inline_param_editing and param_hit is not None and self._ui is not None:
+                current = hit.node.params.get(param_hit)
+
+                if isinstance(current, bool):
+                    hit.node.params[param_hit] = not current
+                    return True
+
+                def _apply_text(result: str | None, node=hit.node, key=param_hit, old=current) -> None:
+                    if result is None:
+                        return
+                    if isinstance(old, int):
+                        try:
+                            node.params[key] = int(result)
+                        except ValueError:
+                            return
+                    elif isinstance(old, float):
+                        try:
+                            node.params[key] = float(result)
+                        except ValueError:
+                            return
+                    else:
+                        node.params[key] = result
+
+                show_input_dialog(
+                    self._ui,
+                    title=f"Edit {param_hit}",
+                    message=f"Set value for '{param_hit}'",
+                    default=str(current),
+                    on_result=_apply_text,
+                )
+                return True
+
             socket_hit = hit.hit_socket(wx, wy)
             if socket_hit is not None:
                 direction, socket_name = socket_hit
