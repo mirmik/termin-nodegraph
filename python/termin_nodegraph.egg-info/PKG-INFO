@@ -1,0 +1,17 @@
+Metadata-Version: 2.4
+Name: termin-nodegraph
+Version: 0.1.0
+Summary: Abstract node graph engine and tcgui adapter
+Author: mirmik
+Author-email: mirmikns@yandex.ru
+License: MIT
+Requires-Python: >=3.8
+Requires-Dist: tcbase
+Requires-Dist: tgfx
+Requires-Dist: tcgui
+Dynamic: author
+Dynamic: author-email
+Dynamic: license
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary
